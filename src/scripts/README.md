@@ -1,0 +1,3 @@
+- submission.sh: sepecifies SLURM parameters to submit the job
+- run.sh: runs the job
+- main.py: ...
