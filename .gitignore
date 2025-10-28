@@ -1,3 +1,7 @@
+# Specific files and folders
+tmp/**
+service.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
