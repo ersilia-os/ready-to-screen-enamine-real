@@ -1,4 +1,4 @@
-# EnamineReal-Ersilia
+# Ready-to-screen Enamine REAL
 Screening the Ersilia subset of Enamine REAL with Morgan Count Fingerprints. 
 
 # Ersilia subset:
