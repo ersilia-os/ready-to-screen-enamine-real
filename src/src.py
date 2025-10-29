@@ -33,7 +33,7 @@ def clip_sparse(vect, nBits=2048):
         l[i] = v if v < np.iinfo(np.int8).max else np.iinfo(np.int8).max
     return l
 
-def smiles_to_ecfp(smiles, radius=2, nBits=2048):
+def smiles_to_ecfp(smiles, radius=3, nBits=2048):
     """
     Convert a list of SMILES strings into Extended Connectivity Fingerprints (ECFP).
 
@@ -41,7 +41,7 @@ def smiles_to_ecfp(smiles, radius=2, nBits=2048):
     ----------
     smiles : list of str
         List of SMILES strings to convert.
-    radius : int, optional, default=2
+    radius : int, optional, default=3
         Radius of the Morgan fingerprint (number of bond hops).
     nBits : int, optional, default=2048
         Length (number of bits) of the fingerprint vector.
