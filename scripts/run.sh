@@ -2,7 +2,7 @@
 
 # Initialize conda
 eval "$(conda shell.bash hook)"
-conda activate /aloy/home/acomajuncosa/anaconda3/envs/lazyqsar
+conda activate /aloy/home/acomajuncosa/anaconda3/envs/enamine
 
 # Get alpha from first argument
 alpha=$1
@@ -11,4 +11,4 @@ alpha=$1
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Call main.py using an absolute path
-python "$SCRIPT_DIR/main.py" "$alpha"
+python "$SCRIPT_DIR/01_calculate_ecfps.py" "$alpha"

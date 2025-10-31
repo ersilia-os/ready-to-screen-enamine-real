@@ -3,13 +3,15 @@ from googleapiclient.http import MediaFileUpload
 from scipy.sparse import csr_matrix, save_npz
 from rdkit.Chem import rdFingerprintGenerator
 from googleapiclient.discovery import build
-import pyarrow.parquet as pq
 from rdkit import Chem
 from tqdm import tqdm
-import pyarrow as pa
 import numpy as np
+import pandas as pd
 import httplib2
 import os
+import csv
+import io
+import zstandard as zstd
 
 def clip_sparse(vect, nBits=2048):
     """
@@ -29,9 +31,10 @@ def clip_sparse(vect, nBits=2048):
         clipped to the maximum representable int8 value.
     """
     l = [0] * nBits
+    MAX_I8 = 127
     for i, v in vect.GetNonzeroElements().items():
-        l[i] = v if v < np.iinfo(np.int8).max else np.iinfo(np.int8).max
-    return l
+        l[i] = v if v < MAX_I8 else MAX_I8
+    return np.array(l, dtype=np.int8)
 
 def smiles_to_ecfp(smiles, radius=3, nBits=2048):
     """
@@ -39,7 +42,7 @@ def smiles_to_ecfp(smiles, radius=3, nBits=2048):
 
     Parameters
     ----------
-    smiles : list of str
+    smiles : list of [SMILES, ID], (str, str)
         List of SMILES strings to convert.
     radius : int, optional, default=3
         Radius of the Morgan fingerprint (number of bond hops).
@@ -59,13 +62,13 @@ def smiles_to_ecfp(smiles, radius=3, nBits=2048):
     """
     mfpgen = rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=nBits)
     OUTPUT_SMILES, X = [], []
-    for smi in tqdm(smiles):
+    for smi, _id in tqdm(smiles):
         try:
             mol = Chem.MolFromSmiles(smi)
             ecfp = mfpgen.GetCountFingerprint(mol)
             ecfp = clip_sparse(ecfp)
             X.append(ecfp)
-            OUTPUT_SMILES.append(smi)
+            OUTPUT_SMILES.append([smi, _id])
         except:
             pass  
     return OUTPUT_SMILES, np.array(X, dtype=np.int8)
@@ -89,7 +92,7 @@ def save_fingerprints(fingerprints, filename):
     sparse_fp = csr_matrix(fingerprints.astype(np.uint8))
     save_npz(filename, sparse_fp)
 
-def upload(file_path, service_file, folder_id="1KqylmcjiLWX9LLPTr2UnjnGlTCpNvvGA"):
+def upload(file_path, service_file, folder_id):
     """
     Upload a local file to a specified Google Drive folder using a service account.
 
@@ -126,27 +129,27 @@ def upload(file_path, service_file, folder_id="1KqylmcjiLWX9LLPTr2UnjnGlTCpNvvGA
         media_body=media,
         fields="id, webViewLink",
         supportsAllDrives=True).execute()
-
+    
 def save_ids(output_smiles, filename):
     """
-    Save a list of [ID, SMILES] pairs to a Parquet file.
+    Save a list of [SMILES, ID] pairs to a compressed CSV (.csv.zst) file.
 
     Parameters
     ----------
     output_smiles : list of [str, str]
-        List containing molecule identifiers and corresponding SMILES strings.
+        List containing SMILES strings and corresponding molecule identifiers.
     filename : str
-        Output path for the Parquet file.
+        Output path for the compressed CSV file.
 
     Notes
     -----
-    The file is written using Zstandard compression (level 19) for efficient storage.
-    Both columns are stored as UTF-8 strings.
+    The file is written using Zstandard compression (level 10) for efficient storage.
+    Rows are streamed directly to the output file to minimize memory usage.
     """
-    table = pa.table({
-        "ID": pa.array([i[0] for i in output_smiles], type=pa.large_string()),
-        "SMILES": pa.array([i[1] for i in output_smiles], type=pa.large_string())})
-    pq.write_table(table, filename, compression="zstd", compression_level=19)
+    with open(filename, "wb") as f, zstd.ZstdCompressor(level=10).stream_writer(f) as zf:
+        writer = csv.writer(io.TextIOWrapper(zf, encoding="utf-8", newline=""))
+        writer.writerow(["SMILES", "ID"])
+        writer.writerows(output_smiles)
     
 # def _remove_existing_in_folder(service, name, folder_id):
 #     resp = service.files().list(
@@ -155,3 +158,33 @@ def save_ids(output_smiles, filename):
 #     for f in resp.get("files", []):
 #         service.files().update(fileId=f["id"], body={"trashed": True},
 #                                supportsAllDrives=True).execute()
+
+def download(filename, out_path, service_file, folder_id):
+    """
+    Download a file from a Google Drive folder.
+
+    Parameters
+    ----------
+    filename : str
+        Name of the file to download.
+    out_path : str
+        Local path to save the file.
+    service_file : str
+        Path to the service account JSON credentials file.
+    folder_id : str
+        Google Drive folder ID.
+    """
+    creds = Credentials.from_service_account_file(service_file, scopes=["https://www.googleapis.com/auth/drive.readonly"])
+    service = build("drive", "v3", credentials=creds)
+    httplib2.DEFAULT_TIMEOUT = 600
+
+    query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+    results = service.files().list(q=query, fields="files(id)", supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+    files = results.get("files", [])
+    if not files:
+        raise FileNotFoundError(f"'{filename}' not found in folder {folder_id}.")
+
+    file_id = files[0]["id"]
+    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+    with open(out_path, "wb") as f:
+        f.write(request.execute())
