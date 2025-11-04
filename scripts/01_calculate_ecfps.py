@@ -29,8 +29,10 @@ OUTPUT_SMILES, X = smiles_to_ecfp(SMILES)
 sys.stderr.write("Creating output files...\n")
 X_file = os.path.join("..", "tmp", file.replace(".csv.zst", "") + "_X.npz")
 SMILES_file = os.path.join("..", "tmp", file.replace(".csv.zst", "") + "_SMILES_IDs.csv.zst")
-save_fingerprints(X, open(X_file, "wb"))
 save_ids(OUTPUT_SMILES, SMILES_file)
+del OUTPUT_SMILES
+save_fingerprints(X, open(X_file, "wb"))
+del X
 
 # Upload files
 upload(X_file, "../service.json", folder_id="1bzGf7sVJ3xcZwzTYz3JTGzkasMXebzIN")
