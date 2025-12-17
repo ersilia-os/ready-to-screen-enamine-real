@@ -5,7 +5,7 @@
 #SBATCH --chdir=/aloy/home/acomajuncosa/Ersilia/ready-to-screen-enamine-real
 #SBATCH --time=12:00:00
 #SBATCH --ntasks=1
-#SBATCH --array=0-994%10
+#SBATCH --array=0-994%1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=128G
 #SBATCH --output=/aloy/scratch/acomajuncosa/Ersilia/ready-to-screen-enamine-real/%x_%a.out

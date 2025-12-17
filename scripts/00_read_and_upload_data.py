@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import sys
+
 sys.path.append("../src")
 from src import upload
 
@@ -49,17 +50,17 @@ root = '.'
 ###### LEAD-LIKE #######
 ########################
 
-print("Splitting REAL Lead-Like!")
-PATH_TO_DATA = "/home/acomajuncosa/Downloads/Enamine_REAL_lead-like_cxsmiles.cxsmiles.bz2"
+# print("Splitting REAL Lead-Like!")
+# PATH_TO_DATA = "/home/acomajuncosa/Downloads/Enamine_REAL_lead-like_cxsmiles.cxsmiles.bz2"
 
-for c, chunk in enumerate(pd.read_csv(PATH_TO_DATA, compression="infer", chunksize=10_000_000, dtype_backend="pyarrow", sep='\t', usecols=["smiles", "id"])):
+# for c, chunk in enumerate(pd.read_csv(PATH_TO_DATA, compression="infer", chunksize=10_000_000, dtype_backend="pyarrow", sep='\t', usecols=["smiles", "id"])):
 
-    # Set filename
-    filename = f"Enamine_REAL_LeadLike_{str(c).zfill(3)}.csv.zst"
+#     # Set filename
+#     filename = f"Enamine_REAL_LeadLike_{str(c).zfill(3)}.csv.zst"
     
-    # Save chunk
-    chunk.to_csv(os.path.join(root, "..", "tmp", filename), index=False, compression={"method": "zstd", "level": 10})
+#     # Save chunk
+#     chunk.to_csv(os.path.join(root, "..", "tmp", filename), index=False, compression={"method": "zstd", "level": 10})
 
-    # Upload to Google Drive and remove file
-    upload(os.path.join(root, "..", "tmp", filename), "../service.json", folder_id="1P3DSLRpD0GL8th2B78b7OauEXp3I2ZY0")
-    os.remove(os.path.join(root, "..", "tmp", filename))
+#     # Upload to Google Drive and remove file
+#     upload(os.path.join(root, "..", "tmp", filename), "../service.json", folder_id="1P3DSLRpD0GL8th2B78b7OauEXp3I2ZY0")
+#     os.remove(os.path.join(root, "..", "tmp", filename))

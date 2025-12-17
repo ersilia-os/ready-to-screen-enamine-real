@@ -65,12 +65,16 @@ def smiles_to_ecfp(smiles, radius=3, nBits=2048):
     for smi, _id in tqdm(smiles):
         try:
             mol = Chem.MolFromSmiles(smi)
-            ecfp = mfpgen.GetCountFingerprint(mol)
-            ecfp = clip_sparse(ecfp)
-            X.append(ecfp)
-            OUTPUT_SMILES.append([smi, _id])
+            if mol is not None:
+                ecfp = mfpgen.GetCountFingerprint(mol)
+                ecfp = clip_sparse(ecfp)
+                X.append(ecfp)
+                OUTPUT_SMILES.append([smi, _id])
+                del ecfp
+            del mol
         except:
-            pass  
+            pass
+    assert len(OUTPUT_SMILES) == len(X), "Row mismatch between X and OUTPUT_SMILES"   
     return OUTPUT_SMILES, np.array(X, dtype=np.int8)
 
 def save_fingerprints(fingerprints, filename):
@@ -188,3 +192,40 @@ def download(filename, out_path, service_file, folder_id):
     request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
     with open(out_path, "wb") as f:
         f.write(request.execute())
+
+
+def list_files(service_file, folder_id):
+    """
+    List files in a Google Drive folder.
+
+    Parameters
+    ----------
+    service_file : str
+        Path to the service account JSON file.
+    folder_id : str
+        ID of the Google Drive folder.
+
+    Returns
+    -------
+    set[str]
+        Set of file names in the folder.
+    """
+    creds = Credentials.from_service_account_file(service_file, scopes=["https://www.googleapis.com/auth/drive.readonly"])
+    service = build("drive", "v3", credentials=creds)
+    query = f"'{folder_id}' in parents and trashed=false"
+
+    names, token = set(), None
+    while True:
+        results = service.files().list(
+            q=query,
+            fields="nextPageToken, files(name)",
+            pageSize=1000,
+            pageToken=token,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
+        names.update(f["name"] for f in results.get("files", []))
+        token = results.get("nextPageToken")
+        if not token:
+            break
+    return names
