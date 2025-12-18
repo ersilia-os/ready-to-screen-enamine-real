@@ -3,7 +3,7 @@ import os
 
 root = os.path.dirname(os.path.abspath(__file__))
 os.chdir(root)
-tmp_dir = os.path.join(root, "..", "tmp")
+DATA_DIR = os.path.join(root, "..", "data")
 
 CHUNK_SIZE = 10_000_000
 CHUNKS_NP = 52
@@ -16,4 +16,4 @@ SPLITS.extend(["Sample", str(i).zfill(3), i * CHUNK_SIZE + 1, i * CHUNK_SIZE + C
 SPLITS.extend(["LeadLike", str(i).zfill(3), i * CHUNK_SIZE + 1, i * CHUNK_SIZE + CHUNK_SIZE + 1] for i in range(CHUNKS_LEAD_LIKE))
 
 # Store list
-pickle.dump(SPLITS, open(os.path.join(tmp_dir, "splits.pkl"), "wb"))
+pickle.dump(SPLITS, open(os.path.join(DATA_DIR, "splits.pkl"), "wb"))

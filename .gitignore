@@ -1,7 +1,6 @@
 # Specific files and folders
 tmp/**
-service.json
-data
+data/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
