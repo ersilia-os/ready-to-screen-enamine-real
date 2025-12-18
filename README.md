@@ -1,10 +1,23 @@
 # Ready-to-screen Enamine REAL
-Screening the Ersilia subset of Enamine REAL with Morgan Count Fingerprints. 
+
+This repository provides the code to prepare the Ersilia subset of the Enamine REAL database, calculating ECFP6 count fingerprints (radius 3, 2048 bits, RDKit version 2025.9.1) at the IRB cluster and storing them at Ersilia's Google Drive.
 
 # Ersilia subset
-The Ersilia subset totals 9.8B compounds and includes:
-- Enamine REAL Sample 1B
-- Enamine REAL Lead-Like 8.3B
-- Enamine REAL Natural-like Product 0.5B
 
-All three libraries can be downloaded directly from the [Enamine website](https://enamine.net/compound-collections/real-compounds/real-database-subsets?highlight=WyJlbmFtaW5lIiwicmVhbCIsInN1YnNldHMiXQ==). Since files are extremelly heavy ...
+The Ersilia subset comprises ~9.9B compounds and includes:
+
+- Enamine REAL Sample 1.04B ()
+- Enamine REAL Lead-Like 8.37B ()
+- Enamine REAL Natural-like Product 0.52B ()
+
+All three libraries are publicly available and can be downloaded directly from the [Enamine READ Database website](https://enamine.net/compound-collections/real-compounds/real-database-subsets?highlight=WyJlbmFtaW5lIiwicmVhbCIsInN1YnNldHMiXQ==). The original files are extremelly heavy (31, 113 and 7 GB, respectively). For reproducibility and robustness, we downloaded them programatically from the Enamine FTP server with the following commands:
+
+```
+wget -c --progress=dot:mega --tries=0 --timeout=60 "https://ftp.enamine.net/download/REAL/2025.02_Enamine_REAL_DB_1B.cxsmiles.bz2"
+wget -c --progress=dot:mega --tries=0 --timeout=60 "https://ftp.enamine.net/download/REAL/Enamine_REAL_lead-like_cxsmiles.cxsmiles.bz2"
+wget -c --progress=dot:mega --tries=0 --timeout=60 "https://ftp.enamine.net/download/REAL/Enamine_REAL_natural_products_like_cxsmiles.cxsmiles.bz2"
+```
+
+
+
+# Pipeline
