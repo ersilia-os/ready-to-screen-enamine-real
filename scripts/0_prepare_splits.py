@@ -1,7 +1,4 @@
-from itertools import islice
-import pandas as pd
 import zipfile
-import pickle
 import time
 import os
 import bz2
@@ -16,6 +13,7 @@ sys.path.append(os.path.join(root, "..", "src"))
 from src import upload, list_files
 tmp_dir = os.path.join(root, "..", "tmp")
 data_dir = os.path.join(root, "..", "data")
+os.makedirs(tmp_dir, exist_ok=True)
 
 # Define some variables
 CHUNK_SIZE = 10_000_000
@@ -74,6 +72,7 @@ for NAME in NAMES:
 
                     # Upload file
                     upload(os.path.join(tmp_dir, FILENAME_ZIP), PATH_TO_SERVICE, folder_id=FOLDER_ID)
+                    time.sleep(5)
 
                     # Check that file is uploaded
                     files_in_drive = list_files(PATH_TO_SERVICE, FOLDER_ID)
@@ -85,7 +84,7 @@ for NAME in NAMES:
                     os.remove(os.path.join(tmp_dir, FILENAME_ZIP))
                                     
                 # Create new file
-                FILENAME = f"Enamine_REAL_{NAME}_{str(CHUNK_COUNT).zfill(3)}.csv"
+                FILENAME = f"Enamine_REAL_{NAME}_{str(CHUNK_COUNT).zfill(3)}.tsv"
                 FILENAME_ZIP = FILENAME + ".zip"
                 out = open(os.path.join(tmp_dir, FILENAME), "w")
                 out.write("smiles\tid\n")
@@ -97,3 +96,31 @@ for NAME in NAMES:
             fields = line.rstrip("\n").split("\t")
             out.write(f"{fields[smiles_idx]}\t{fields[id_idx]}\n")
             LINE_COUNT += 1
+
+        # A file is already open
+        if out is not None:
+
+            # Close file
+            out.close()
+
+            # Zip file
+            with zipfile.ZipFile(os.path.join(tmp_dir, FILENAME_ZIP), "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(os.path.join(tmp_dir, FILENAME), arcname=FILENAME)
+
+            # Check that file is not uploaded yet
+            files_in_drive = list_files(PATH_TO_SERVICE, FOLDER_ID)
+            if FILENAME_ZIP in files_in_drive:
+                raise FileExistsError(f"{FILENAME_ZIP} already exists in Google Drive folder {FOLDER_ID}")
+
+            # Upload file
+            upload(os.path.join(tmp_dir, FILENAME_ZIP), PATH_TO_SERVICE, folder_id=FOLDER_ID)
+            time.sleep(5)
+
+            # Check that file is uploaded
+            files_in_drive = list_files(PATH_TO_SERVICE, FOLDER_ID)
+            if FILENAME_ZIP not in files_in_drive:
+                raise FileExistsError(f"{FILENAME_ZIP} does not exist in Google Drive folder {FOLDER_ID}!")
+
+            # Remove local files
+            os.remove(os.path.join(tmp_dir, FILENAME))
+            os.remove(os.path.join(tmp_dir, FILENAME_ZIP))

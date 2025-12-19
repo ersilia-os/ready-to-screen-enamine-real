@@ -1,6 +1,9 @@
 from google.oauth2.service_account import Credentials
 from googleapiclient.http import MediaFileUpload
-from scipy.sparse import csr_matrix, save_npz
+# from scipy.sparse import csr_matrix, save_npz
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseDownload
+from google_auth_httplib2 import AuthorizedHttp
 from rdkit.Chem import rdFingerprintGenerator
 from googleapiclient.discovery import build
 from rdkit import Chem
@@ -9,57 +12,54 @@ import numpy as np
 import pandas as pd
 import httplib2
 import os
-import csv
+import sys
+import time
 import io
-import zstandard as zstd
 
 def clip_sparse(vect, nBits=2048):
     """
-    Convert a sparse RDKit fingerprint vector to a dense int8 list.
+    Convert a sparse RDKit count fingerprint to a dense int8 NumPy array.
 
     Parameters
     ----------
-    vect : rdkit.DataStructs.cDataStructs.ExplicitBitVect or similar
-        Sparse fingerprint vector with nonzero elements.
+    vect : rdkit.DataStructs.cDataStructs.SparseIntVect or similar
+        Sparse count fingerprint exposing `GetNonzeroElements()`.
     nBits : int, optional, default=2048
         Length of the dense output vector.
 
     Returns
     -------
-    list of int
-        Dense list representation of the fingerprint, where values are
-        clipped to the maximum representable int8 value.
+    numpy.ndarray
+        Dense fingerprint vector of shape `(nBits,)` with dtype `int8`,
+        where values are clipped to the maximum representable int8 value.
     """
-    l = [0] * nBits
     MAX_I8 = 127
+    arr = np.zeros(nBits, dtype=np.int8)
     for i, v in vect.GetNonzeroElements().items():
-        l[i] = v if v < MAX_I8 else MAX_I8
-    return np.array(l, dtype=np.int8)
+        arr[i] = min(v, MAX_I8)
+    return arr
 
 def smiles_to_ecfp(smiles, radius=3, nBits=2048):
     """
-    Convert a list of SMILES strings into Extended Connectivity Fingerprints (ECFP).
+    Convert a list of (SMILES, ID) into ECFP count fingerprints.
 
     Parameters
     ----------
-    smiles : list of [SMILES, ID], (str, str)
-        List of SMILES strings to convert.
+    smiles : list of (str, str)
+        List of (SMILES, ID) pairs.
     radius : int, optional, default=3
-        Radius of the Morgan fingerprint (number of bond hops).
+        Radius of the Morgan fingerprint.
     nBits : int, optional, default=2048
-        Length (number of bits) of the fingerprint vector.
+        Length of the fingerprint vector.
 
     Returns
     -------
-    OUTPUT_SMILES : list of str
-        List of valid SMILES strings successfully converted.
+    OUTPUT_SMILES : list of [str, str]
+        [SMILES, ID] pairs.
     X : numpy.ndarray
-        2D array of ECFP bit vectors (dtype=int8).
-
-    Notes
-    -----
-    Invalid or unparsable SMILES are skipped.
+        2D array of ECFP count fingerprints (dtype=int8).
     """
+     
     mfpgen = rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=nBits)
     OUTPUT_SMILES, X = [], []
     for smi, _id in tqdm(smiles):
@@ -67,34 +67,13 @@ def smiles_to_ecfp(smiles, radius=3, nBits=2048):
             mol = Chem.MolFromSmiles(smi)
             if mol is not None:
                 ecfp = mfpgen.GetCountFingerprint(mol)
-                ecfp = clip_sparse(ecfp)
+                ecfp = clip_sparse(ecfp, nBits=nBits)
                 X.append(ecfp)
                 OUTPUT_SMILES.append([smi, _id])
-                del ecfp
-            del mol
-        except:
-            pass
+        except Exception:
+            continue
     assert len(OUTPUT_SMILES) == len(X), "Row mismatch between X and OUTPUT_SMILES"   
     return OUTPUT_SMILES, np.array(X, dtype=np.int8)
-
-def save_fingerprints(fingerprints, filename):
-    """
-    Save molecular fingerprints to a compressed sparse NPZ file.
-
-    Parameters
-    ----------
-    fingerprints : numpy.ndarray
-        2D array of fingerprint vectors to save.
-    filename : str
-        Output file path for the compressed NPZ file.
-
-    Notes
-    -----
-    Fingerprints are converted to uint8 and stored as a CSR (Compressed Sparse Row) matrix
-    to minimize disk space usage.
-    """
-    sparse_fp = csr_matrix(fingerprints.astype(np.uint8))
-    save_npz(filename, sparse_fp)
 
 def upload(file_path, service_file, folder_id):
     """
@@ -123,45 +102,16 @@ def upload(file_path, service_file, folder_id):
     The HTTP timeout is extended to 600 seconds to support large file transfers.
     """
     creds = Credentials.from_service_account_file(service_file, scopes=["https://www.googleapis.com/auth/drive.file"])
-    drive_service = build("drive", "v3", credentials=creds)
+    http = httplib2.Http(timeout=600)
+    authed_http = AuthorizedHttp(creds, http=http)
+    drive_service = build("drive", "v3", http=authed_http)
     file_metadata = {"name": os.path.basename(file_path), "parents": [folder_id]}
-    media = MediaFileUpload(file_path, resumable=True)
-    httplib2.DEFAULT_TIMEOUT = 600
-    # _remove_existing_in_folder(drive_service, os.path.basename(file_path), folder_id)
+    media = MediaFileUpload(file_path, resumable=False)
     drive_service.files().create(
         body=file_metadata,
         media_body=media,
         fields="id, webViewLink",
         supportsAllDrives=True).execute()
-    
-def save_ids(output_smiles, filename):
-    """
-    Save a list of [SMILES, ID] pairs to a compressed CSV (.csv.zst) file.
-
-    Parameters
-    ----------
-    output_smiles : list of [str, str]
-        List containing SMILES strings and corresponding molecule identifiers.
-    filename : str
-        Output path for the compressed CSV file.
-
-    Notes
-    -----
-    The file is written using Zstandard compression (level 10) for efficient storage.
-    Rows are streamed directly to the output file to minimize memory usage.
-    """
-    with open(filename, "wb") as f, zstd.ZstdCompressor(level=10).stream_writer(f) as zf:
-        writer = csv.writer(io.TextIOWrapper(zf, encoding="utf-8", newline=""))
-        writer.writerow(["SMILES", "ID"])
-        writer.writerows(output_smiles)
-    
-# def _remove_existing_in_folder(service, name, folder_id):
-#     resp = service.files().list(
-#         q=f"name='{name}' and '{folder_id}' in parents and trashed=false",
-#         fields="files(id)", supportsAllDrives=True).execute()
-#     for f in resp.get("files", []):
-#         service.files().update(fileId=f["id"], body={"trashed": True},
-#                                supportsAllDrives=True).execute()
 
 def download(filename, out_path, service_file, folder_id):
     """
@@ -179,8 +129,9 @@ def download(filename, out_path, service_file, folder_id):
         Google Drive folder ID.
     """
     creds = Credentials.from_service_account_file(service_file, scopes=["https://www.googleapis.com/auth/drive.readonly"])
-    service = build("drive", "v3", credentials=creds)
-    httplib2.DEFAULT_TIMEOUT = 600
+    http = httplib2.Http(timeout=600)
+    authed_http = AuthorizedHttp(creds, http=http)
+    service = build("drive", "v3", http=authed_http)
 
     query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
     results = service.files().list(q=query, fields="files(id)", supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
@@ -190,11 +141,26 @@ def download(filename, out_path, service_file, folder_id):
 
     file_id = files[0]["id"]
     request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
-    with open(out_path, "wb") as f:
-        f.write(request.execute())
-
+    # with open(out_path, "wb") as f:
+    #     f.write(request.execute())
+    with io.FileIO(out_path, "wb") as fh:
+        downloader = MediaIoBaseDownload(fh, request,chunksize=10 * 1024 * 1024)  # 100 MB chunks
+        done = False
+        retries = 0
+        while not done:
+            try:
+                status, done = downloader.next_chunk()
+                if status:
+                    sys.stderr.write(f"Download {int(status.progress() * 100)}%\n")
+                    sys.stderr.flush()
+            except (HttpError, OSError):
+                retries += 1
+                if retries >= 10:
+                    raise
+                time.sleep(10)
 
 def list_files(service_file, folder_id):
+
     """
     List files in a Google Drive folder.
 
@@ -229,3 +195,51 @@ def list_files(service_file, folder_id):
         if not token:
             break
     return names
+
+# def save_fingerprints(fingerprints, filename):
+#     """
+#     Save molecular fingerprints to a compressed sparse NPZ file.
+
+#     Parameters
+#     ----------
+#     fingerprints : numpy.ndarray
+#         2D array of fingerprint vectors to save.
+#     filename : str
+#         Output file path for the compressed NPZ file.
+
+#     Notes
+#     -----
+#     Fingerprints are converted to uint8 and stored as a CSR (Compressed Sparse Row) matrix
+#     to minimize disk space usage.
+#     """
+#     sparse_fp = csr_matrix(fingerprints.astype(np.uint8))
+#     save_npz(filename, sparse_fp)
+
+# def save_ids(output_smiles, filename):
+#     """
+#     Save a list of [SMILES, ID] pairs to a compressed CSV (.csv.zst) file.
+
+#     Parameters
+#     ----------
+#     output_smiles : list of [str, str]
+#         List containing SMILES strings and corresponding molecule identifiers.
+#     filename : str
+#         Output path for the compressed CSV file.
+
+#     Notes
+#     -----
+#     The file is written using Zstandard compression (level 10) for efficient storage.
+#     Rows are streamed directly to the output file to minimize memory usage.
+#     """
+#     with open(filename, "wb") as f, zstd.ZstdCompressor(level=10).stream_writer(f) as zf:
+#         writer = csv.writer(io.TextIOWrapper(zf, encoding="utf-8", newline=""))
+#         writer.writerow(["SMILES", "ID"])
+#         writer.writerows(output_smiles)
+    
+# def _remove_existing_in_folder(service, name, folder_id):
+#     resp = service.files().list(
+#         q=f"name='{name}' and '{folder_id}' in parents and trashed=false",
+#         fields="files(id)", supportsAllDrives=True).execute()
+#     for f in resp.get("files", []):
+#         service.files().update(fileId=f["id"], body={"trashed": True},
+#                                supportsAllDrives=True).execute()
