@@ -106,7 +106,7 @@ def upload(file_path, service_file, folder_id):
     authed_http = AuthorizedHttp(creds, http=http)
     drive_service = build("drive", "v3", http=authed_http)
     file_metadata = {"name": os.path.basename(file_path), "parents": [folder_id]}
-    media = MediaFileUpload(file_path, resumable=False)
+    media = MediaFileUpload(file_path, resumable=False, chunksize=10 * 1024 * 1024)
     drive_service.files().create(
         body=file_metadata,
         media_body=media,

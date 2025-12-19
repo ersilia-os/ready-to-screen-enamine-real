@@ -60,6 +60,7 @@ with open(os.path.join(tmp_dir, SMILES_FILE), "w") as out:
 # ECPF6s
 sys.stderr.write("ECFP6s...\n")
 np.savez_compressed (os.path.join(tmp_dir, X_FILE), X=X)
+del X, OUTPUT_SMILES
 
 # Compress SMILES and IDs file
 sys.stderr.write("Compressing SMILES and IDs...\n")
