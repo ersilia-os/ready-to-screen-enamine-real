@@ -39,7 +39,7 @@ SMILES = pd.read_csv(os.path.join(tmp_dir, FILENAME), sep='\t').values.tolist()
 sys.stderr.write(f"Number of original compounds: {len(SMILES)}\n")
 sys.stderr.flush()
 
-# Calculate ECFP4s
+# Calculate ECFP6s
 sys.stderr.write("Calculating ECFP6s...\n")
 OUTPUT_SMILES, X = smiles_to_ecfp(SMILES)
 sys.stderr.write(f"Len OUTPUT_SMILES:{len(OUTPUT_SMILES)}...\n")
@@ -72,17 +72,38 @@ with zipfile.ZipFile(os.path.join(tmp_dir, SMILES_FILE.replace('.tsv', '.tsv.zip
 sys.stderr.write("Checking Google Drive before uploading...\n")
 files_in_drive = list_files(PATH_TO_SERVICE, FOLDER_ID_ECFP)
 if SMILES_FILE.replace('.tsv', '.tsv.zip') in files_in_drive:
-    raise FileExistsError(f"{SMILES_FILE.replace('.tsv', '.tsv.zip')} already exists in Google Drive folder {FOLDER_ID_ECFP}")
+    sys.stderr.error(f"{SMILES_FILE.replace('.tsv', '.tsv.zip')} already exists in Google Drive folder {FOLDER_ID_ECFP}")
+    sys.stderr.flush()
 if X_FILE in files_in_drive:
-    raise FileExistsError(f"{X_FILE} already exists in Google Drive folder {FOLDER_ID_ECFP}")
+    sys.stderr.error(f"{X_FILE} already exists in Google Drive folder {FOLDER_ID_ECFP}")
+    sys.stderr.flush()
 
 # Upload files
 sys.stderr.write("Uploading files...\n")
-upload(os.path.join(tmp_dir, SMILES_FILE.replace('.tsv', '.tsv.zip')), PATH_TO_SERVICE, FOLDER_ID_ECFP)
-upload(os.path.join(tmp_dir, X_FILE), PATH_TO_SERVICE, FOLDER_ID_ECFP)
-time.sleep(10)
+for attempt in range(10):
+    try:
+        upload(os.path.join(tmp_dir, SMILES_FILE.replace('.tsv', '.tsv.zip')), PATH_TO_SERVICE, FOLDER_ID_ECFP)
+        break
+    except Exception:
+        if attempt == 9:
+            raise
+        sys.stderr.write(f"Retrying upload (SMILES zip) [{attempt + 1}/10]\n")
+        sys.stderr.flush()
+        time.sleep(10)
+
+for attempt in range(10):
+    try:
+        upload(os.path.join(tmp_dir, X_FILE), PATH_TO_SERVICE, FOLDER_ID_ECFP)
+        break
+    except Exception:
+        if attempt == 9:
+            raise
+        sys.stderr.write(f"Retrying upload (X npz) [{attempt + 1}/10]\n")
+        sys.stderr.flush()
+        time.sleep(10)
 
 # Check that files are uploaded already
+time.sleep(10)
 sys.stderr.write("Checking Google Drive after uploading...\n")
 sys.stderr.flush()
 files_in_drive = list_files(PATH_TO_SERVICE, FOLDER_ID_ECFP)

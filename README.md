@@ -24,11 +24,15 @@ The downloaded files were stored in their original format in the `data/` directo
 
 Code in this repository does the following:
 
-1. Splits all molecules (~10B) into 994 chunks of 10M compounds each, including SMILES and Enamine IDs (TSV format). Generated files are zip-compressed and directly uploaded into Ersilia's Google Drive. Running time is about 24h in local. 
+1. Splits all molecules (~10B) into 994 chunks of 10M compounds each, including SMILES and Enamine IDs (TSV format). Generated files are zip-compressed and directly uploaded into [Ersilia's Google Drive](https://drive.google.com/drive/folders/1bWrCvi5FXodxQ2S88nYLecHDjk5Jer8Y), under the name `{split_name}.tsv.zip`. Running time is about 24h in local. 
 
-2. This step is run at the IRB cluster. 
+2. This step is run in parallel at the IRB cluster. For each split (chunk of 10M compounds), SMILES are downloaded and processed to calcuate ECFP6s using RDKit. Python functions to download and upload data, calculate ECFP6s and list files on remote repositories are located in `src/src.py`. Two main outputs are generated in this step: a `{split_name}_SMILES_IDs.tsv.zip` (including SMILES and compound Enamine IDs) and a `{split_name}_X.npz` file (including their corresponding ECFP6s). Notice that although the number of rows in both files must be identical, this number is not necessarily the same as the input number of compounds (10M), as invalid or failed compounds will be ommitted and dropped from final results. Running time depends a lot on parallelization capacity: each split needs 48GB of RAM and takes 1h30min, roughly. 
 
+3. Several checks have been implemented to assess the consistency of final results. All checks are found in `ipynb` format in the `notebooks` folder:
 
+- `check_errors.ipynb`: Checking that there are no errors/warnings in job logs.
+- `check_files.ipynb`: Checking that files in Google Drive ("libraries" and "ecfps") are exactly the ones expected - no more, no less, no duplicates.
+- `check_consistency.ipynb`: Checking that outcome results are consistent. For each split, (i) download both SMILES and ECFP6s, (ii) check that the number of rows between both files are identical, (iii) manually sample 10k rows (both SMILES and ECFP6s) from the huge 10M matrices, (iv) manually calculate ECFP6s for the 10k SMILES and (v) check that these newly calculated 10k ECFP6s are identical to the ones extracted from the huge matrix. 
 
 
 ## Usage

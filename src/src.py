@@ -6,15 +6,21 @@ from googleapiclient.http import MediaIoBaseDownload
 from google_auth_httplib2 import AuthorizedHttp
 from rdkit.Chem import rdFingerprintGenerator
 from googleapiclient.discovery import build
+from google.oauth2 import service_account
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from google.auth.transport.requests import Request
 from rdkit import Chem
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import httplib2
+import requests
 import os
 import sys
 import time
 import io
+
 
 def clip_sparse(vect, nBits=2048):
     """
@@ -77,41 +83,99 @@ def smiles_to_ecfp(smiles, radius=3, nBits=2048):
 
 def upload(file_path, service_file, folder_id):
     """
-    Upload a local file to a specified Google Drive folder using a service account.
+    Upload a local file to a Google Drive folder using a service account.
+
+    The file is uploaded in a single, non-resumable request. If the network
+    connection is interrupted, the upload fails and must be retried from
+    the beginning. No partial file is left in Google Drive.
+
+    Enforcing UNIQUE filename within a folder:
+      - if file doesn't exist -> create
+      - if exactly one exists -> update (overwrite)
+      - if >1 exists -> raise and stop
+
+    Retry policy (as requested):
+      - if upload attempt fails, and file exists -> update again
+      - if upload attempt fails, and file doesn't exist -> create again
 
     Parameters
     ----------
     file_path : str
         Path to the local file to upload.
+    service_file : str
+        Path to the service account JSON credentials file.
     folder_id : str
         ID of the destination Google Drive folder.
-    service_file : str
-        Path to the Google Cloud service account JSON credentials file.
 
     Returns
     -------
     dict
-        Dictionary containing the uploaded file’s metadata:
-        - 'id': The unique ID of the uploaded file.
-        - 'webViewLink': The URL to view the uploaded file in Google Drive.
+        Metadata of the uploaded file, including its Drive file ID.
 
-    Notes
-    -----
-    This function authenticates with Google Drive using a service account,
-    builds the Drive API client, and uploads the file using a resumable upload.
-    The HTTP timeout is extended to 600 seconds to support large file transfers.
+    Raises
+    ------
+    RuntimeError
+        If more than one file with the same name exists in the folder.
+    Exception
+        Any Google API / network error.
     """
-    creds = Credentials.from_service_account_file(service_file, scopes=["https://www.googleapis.com/auth/drive.file"])
-    http = httplib2.Http(timeout=600)
-    authed_http = AuthorizedHttp(creds, http=http)
-    drive_service = build("drive", "v3", http=authed_http)
-    file_metadata = {"name": os.path.basename(file_path), "parents": [folder_id]}
-    media = MediaFileUpload(file_path, resumable=False, chunksize=10 * 1024 * 1024)
-    drive_service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id, webViewLink",
-        supportsAllDrives=True).execute()
+    try:
+        creds = Credentials.from_service_account_file(
+            service_file,
+            scopes=["https://www.googleapis.com/auth/drive.file"],
+        )
+        http = httplib2.Http(timeout=1800)
+        authed_http = AuthorizedHttp(creds, http=http)
+        service = build("drive", "v3", http=authed_http)
+
+        # metadata = {"name": os.path.basename(file_path), "parents": [folder_id]}
+        # Get filename
+        filename = os.path.basename(file_path)
+
+        # Find existing files with same name in folder
+        query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+        results = service.files().list(
+            q=query,
+            fields="files(id, name, size, modifiedTime)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            pageSize=100
+        ).execute()
+        matches = results.get("files", [])
+
+        # Enforce uniqueness: >1 file with same name is not allowed
+        if len(matches) > 1:
+            details = "\n".join(
+                [f"- id={f['id']} size={f.get('size')} modified={f.get('modifiedTime')}" for f in matches]
+            )
+            raise RuntimeError(
+                f"Duplicate files detected for '{filename}' in folder {folder_id}. "
+                f"Please clean manually so only one remains.\n{details}"
+            )
+        
+        media = MediaFileUpload(file_path, resumable=False, chunksize=10 * 1024 * 1024)
+
+        # If exists -> update; else -> create
+        if len(matches) == 1:
+            file_id = matches[0]["id"]
+            return service.files().update(
+                fileId=file_id,
+                media_body=media,
+                fields="id, webViewLink",
+                supportsAllDrives=True,
+            ).execute()
+
+        metadata = {"name": filename, "parents": [folder_id]}
+        return service.files().create(
+            body=metadata,
+            media_body=media,
+            fields="id, webViewLink",
+            supportsAllDrives=True,
+        ).execute()
+
+    except Exception:
+        # Fail fast: caller is expected to retry if needed
+        raise
 
 def download(filename, out_path, service_file, folder_id):
     """
@@ -129,12 +193,18 @@ def download(filename, out_path, service_file, folder_id):
         Google Drive folder ID.
     """
     creds = Credentials.from_service_account_file(service_file, scopes=["https://www.googleapis.com/auth/drive.readonly"])
-    http = httplib2.Http(timeout=600)
-    authed_http = AuthorizedHttp(creds, http=http)
-    service = build("drive", "v3", http=authed_http)
-
-    query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
-    results = service.files().list(q=query, fields="files(id)", supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+    for attempt in range(10):
+        try:
+            http = httplib2.Http(timeout=600)
+            authed_http = AuthorizedHttp(creds, http=http)
+            service = build("drive", "v3", http=authed_http)
+            query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+            results = service.files().list(q=query, fields="files(id)", supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+            break
+        except (HttpError, OSError):
+            time.sleep(5)
+            if attempt == 9:
+                raise
     files = results.get("files", [])
     if not files:
         raise FileNotFoundError(f"'{filename}' not found in folder {folder_id}.")
@@ -177,24 +247,32 @@ def list_files(service_file, folder_id):
         Set of file names in the folder.
     """
     creds = Credentials.from_service_account_file(service_file, scopes=["https://www.googleapis.com/auth/drive.readonly"])
-    service = build("drive", "v3", credentials=creds)
-    query = f"'{folder_id}' in parents and trashed=false"
+    for attempt in range(10):
+        try:
+            http = httplib2.Http(timeout=1800)
+            authed_http = AuthorizedHttp(creds, http=http)
+            service = build("drive", "v3", http=authed_http)
+            query = f"'{folder_id}' in parents and trashed=false"
+            names, token = set(), None
+            while True:
+                results = service.files().list(
+                    q=query,
+                    fields="nextPageToken, files(name)",
+                    pageSize=1000,
+                    pageToken=token,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True
+                ).execute()
+                names.update(f["name"] for f in results.get("files", []))
+                token = results.get("nextPageToken")
+                if not token:
+                    break
+            return names
 
-    names, token = set(), None
-    while True:
-        results = service.files().list(
-            q=query,
-            fields="nextPageToken, files(name)",
-            pageSize=1000,
-            pageToken=token,
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True
-        ).execute()
-        names.update(f["name"] for f in results.get("files", []))
-        token = results.get("nextPageToken")
-        if not token:
-            break
-    return names
+        except (HttpError, OSError, TimeoutError):
+            if attempt == 9:
+                raise
+            time.sleep(5)
 
 # def save_fingerprints(fingerprints, filename):
 #     """
